@@ -1,0 +1,26 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ── OS / editor ──
+.DS_Store
+Thumbs.db
+
+# ── Local backups ──
+*.bak
+
+# ── Non-runtime: dev tooling, research outputs, training data ──
+# (kept in the working tree under archive/, just not deployed/committed)
+archive/
+data/cricedge_train.db
+data/raw/
+
+# ── Streamlit local secrets (do NOT commit credentials) ──
+.streamlit/secrets.toml
+
+# ── Local agent / editor settings ──
+.claude/

@@ -1,0 +1,22 @@
+# Build context exclusions — keep the image small and the runtime tree clean.
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.bak
+
+# Non-runtime: dev tooling, research outputs, training data
+archive/
+data/cricedge_train.db
+data/raw/
+
+# VCS / local
+.git/
+.gitignore
+.claude/
+.streamlit/secrets.toml
+
+# Docs not needed at runtime (README kept for context if you want it)
+*.md
+!README.md
