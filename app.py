@@ -27,7 +27,7 @@ from model.market import (
     MICRO_MARKETS, FULL_INNINGS_TARGET, available_micro_markets, calc_micro_market,
 )
 from model.checkpoint_models import detect_checkpoint, apply_checkpoint_model
-from data.database import init_db, get_db_status, get_all_predictions, get_venue_stats, get_venues, get_batters, get_bowlers
+from data.database import init_db, get_db_status, get_all_predictions, get_venue_stats, get_venues, get_batters, get_bowlers, get_teams
 from ui.components import (
     inject_css, render_header, render_live_score, render_recent_overs,
     render_probability_card, render_history_tab, render_analytics_tab,
@@ -50,12 +50,62 @@ _init_db()
 
 @st.cache_data(ttl=300)
 def _load_venues(format_: str) -> list[str]:
-    """Load venues from DB for the current format, cached 5 min."""
+    """Load venues from DB for the current format (cached 5 min).
+
+    Deduplicates rows where Cricsheet stored the same ground under two name
+    forms — e.g. "Sophia Gardens" and "Sophia Gardens, Cardiff".  When the
+    ground name (part before the first comma) is shared, we keep only the
+    variant with the highest sample_matches count so the dropdown is clean.
+    """
     try:
-        venues = get_venues(format_)
-        if not venues:  # fallback: all formats
-            venues = get_venues()
-        return venues
+        from data.database import get_connection
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT venue, sample_matches FROM venue_stats WHERE format=? ORDER BY venue",
+                (format_,)
+            ).fetchall()
+        finally:
+            conn.close()
+
+        if not rows:
+            rows_all = get_venues()
+            return sorted(rows_all)
+
+        # Build a dict of name -> sample_count for all venues
+        name_to_n: dict[str, int] = {}
+        for r in rows:
+            name = r["venue"] or ""
+            name_to_n[name] = r["sample_matches"] or 0
+
+        # Suppress a short name when a longer "Name, City" form of the SAME
+        # ground exists (i.e. short_name is the exact prefix before the comma
+        # of some other entry).  Keep whichever variant has more samples.
+        # This collapses "Sophia Gardens" / "Sophia Gardens, Cardiff" into one
+        # but keeps "County Ground, Bristol" and "County Ground, Derby" separate.
+        suppressed: set[str] = set()
+        for name in list(name_to_n):
+            ground = name.split(",")[0].strip()
+            if ground != name:
+                continue  # only process short-form names here
+            longer = [k for k in name_to_n if k != name and k.startswith(name + ",")]
+            if not longer:
+                continue
+            if len(longer) == 1:
+                # Clear 1-to-1 duplicate (e.g. "Sophia Gardens" / "Sophia Gardens, Cardiff")
+                # Keep whichever has more samples
+                best_long = longer[0]
+                if name_to_n[name] >= name_to_n[best_long]:
+                    suppressed.add(best_long)       # short wins
+                else:
+                    suppressed.add(name)            # long wins
+            else:
+                # Multiple specific extensions → short form is an aggregate, not a real
+                # ground (e.g. "County Ground" merges Bristol/Hove/Derby/etc.)
+                # Suppress the generic short form; keep all specific ones.
+                suppressed.add(name)
+
+        return sorted(n for n in name_to_n if n not in suppressed)
     except Exception:
         return []
 
@@ -165,6 +215,15 @@ KNOWN_TEAMS_WOMENS = sorted([
     "Papua New Guinea Women", "Canada Women", "Kenya Women",
 ])
 
+# T20 Blast uses county team names — not national team names.
+# Clean 19-county list matching exactly what Cricsheet ingests (fallback only).
+KNOWN_TEAMS_T20_BLAST = sorted([
+    "Birmingham Bears", "Derbyshire", "Durham", "Essex", "Glamorgan",
+    "Gloucestershire", "Hampshire", "Kent", "Lancashire", "Leicestershire",
+    "Middlesex", "Northamptonshire", "Nottinghamshire", "Somerset",
+    "Surrey", "Sussex", "Warwickshire", "Worcestershire", "Yorkshire",
+])
+
 KNOWN_TEAMS_MENS_ODI = sorted([
     "India", "Australia", "England", "New Zealand", "South Africa",
     "West Indies", "Pakistan", "Sri Lanka", "Bangladesh", "Zimbabwe",
@@ -177,6 +236,27 @@ KNOWN_TEAMS_MENS_ODI = sorted([
 ])
 
 KNOWN_TEAMS = sorted(set(KNOWN_TEAMS_WOMENS + KNOWN_TEAMS_MENS_ODI))
+
+
+@st.cache_data(ttl=600)
+def _load_teams(format_: str) -> list[str]:
+    """Load team names for the given format from the DB (cached 10 min).
+    For T20 Blast this returns the 19 actual county names from team_batting_stats.
+    Falls back to the static list if the DB has no rows yet."""
+    try:
+        teams = get_teams(format_)
+        if teams:
+            return sorted(teams)
+    except Exception:
+        pass
+    if format_ == "T20 Blast":
+        return KNOWN_TEAMS_T20_BLAST
+    return KNOWN_TEAMS_WOMENS
+
+
+def _teams_for_format(fmt: str) -> list[str]:
+    """Return the team list for the selected format (DB-backed for T20 Blast)."""
+    return _load_teams(fmt)
 
 def _expand_team(raw: str) -> str:
     """Expand abbreviation → full team name."""
@@ -822,28 +902,21 @@ with tab_analyse:
             # ╚══════════════════════════════════╝
             st.markdown('<div class="ce-card"><div class="ce-card-title">🏏 MATCH DETAILS</div>', unsafe_allow_html=True)
 
-            t1, t2 = st.columns(2)
-            with t1:
-                batting_team = st.selectbox("Batting team", [""] + KNOWN_TEAMS_WOMENS,
-                    index=(KNOWN_TEAMS_WOMENS.index(st.session_state["batting_team"]) + 1)
-                          if st.session_state["batting_team"] in KNOWN_TEAMS_WOMENS else 0,
-                    key="sel_bat")
-                if batting_team:
-                    st.session_state["batting_team"] = batting_team
-            with t2:
-                bowling_team = st.selectbox("Bowling team", [""] + KNOWN_TEAMS_WOMENS,
-                    index=(KNOWN_TEAMS_WOMENS.index(st.session_state["bowling_team"]) + 1)
-                          if st.session_state["bowling_team"] in KNOWN_TEAMS_WOMENS else 0,
-                    key="sel_bowl")
-                if bowling_team:
-                    st.session_state["bowling_team"] = bowling_team
-
+            # ── FORMAT + INNINGS + VENUE (first row — must render before teams
+            #    so that _replay_fmt is updated before the team selectboxes draw)
             f1, f2, f3 = st.columns([2, 1, 2])
             with f1:
                 fmt_sel = st.selectbox("Format", config.SUPPORTED_FORMATS,
                     index=config.SUPPORTED_FORMATS.index(st.session_state["format"])
                           if st.session_state["format"] in config.SUPPORTED_FORMATS else 0,
                     key="rep_fmt_sel")
+                # When format changes, clear team selection and force a rerun so
+                # the team dropdowns below immediately show the right options.
+                if fmt_sel != st.session_state["format"]:
+                    st.session_state["format"] = fmt_sel
+                    st.session_state["batting_team"] = ""
+                    st.session_state["bowling_team"] = ""
+                    st.rerun()
                 st.session_state["format"] = fmt_sel
             with f2:
                 inn_sel = st.selectbox("Inn", [1, 2],
@@ -857,6 +930,25 @@ with tab_analyse:
                 _v_idx = (_venue_opts.index(_cur_venue) if _cur_venue in _venue_opts else 0)
                 _sel_venue = st.selectbox("Venue", _venue_opts, index=_v_idx, key="rep_venue_sel")
                 st.session_state["venue"] = "" if _sel_venue == "-- Unknown venue --" else _sel_venue
+
+            # ── BATTING / BOWLING TEAMS (second row — format is already committed above)
+            t1, t2 = st.columns(2)
+            _replay_fmt = st.session_state.get("format", config.PRIMARY_FORMAT)
+            _team_list  = _teams_for_format(_replay_fmt)
+            with t1:
+                batting_team = st.selectbox("Batting team", [""] + _team_list,
+                    index=(_team_list.index(st.session_state["batting_team"]) + 1)
+                          if st.session_state["batting_team"] in _team_list else 0,
+                    key="sel_bat")
+                if batting_team:
+                    st.session_state["batting_team"] = batting_team
+            with t2:
+                bowling_team = st.selectbox("Bowling team", [""] + _team_list,
+                    index=(_team_list.index(st.session_state["bowling_team"]) + 1)
+                          if st.session_state["bowling_team"] in _team_list else 0,
+                    key="sel_bowl")
+                if bowling_team:
+                    st.session_state["bowling_team"] = bowling_team
 
             if st.session_state["innings"] == 2:
                 tgt_v = st.number_input("Target (1st innings total)", 1, 300,
@@ -1511,12 +1603,24 @@ with tab_analyse:
             # number, plus the out-of-sample disclaimer. Shown only at the three
             # mapped production checkpoints (config.CHECKPOINT_MODELS).
             if result.get("checkpoint_key"):
+                _cur_fmt = st.session_state.get("format", config.PRIMARY_FORMAT)
+                if _cur_fmt == "T20 Blast":
+                    _ckpt_caveat = (
+                        f'<b style="color:#f5b53c;">{result.get("checkpoint_model", "FULL")} model</b> · '
+                        f'<b style="color:#f59b3c;">Carried over from Women\'s T20I validation '
+                        f'— not yet validated for T20 Blast.</b> '
+                        f'T20 Blast-specific validation will run once live match data accrues.'
+                    )
+                else:
+                    _ckpt_caveat = (
+                        f'<b style="color:#f5b53c;">{result.get("checkpoint_model", "FULL")} model</b> · '
+                        f'Tested on historical out-of-sample data (2024+ matches). '
+                        f'Past performance does not guarantee future results.'
+                    )
                 st.markdown(
                     f'<div style="text-align:center; margin-bottom:0.6rem; '
                     f'color:#8a93a6; font-size:0.72rem; line-height:1.4;">'
-                    f'<b style="color:#f5b53c;">{result.get("checkpoint_model", "FULL")} model</b> · '
-                    f'Tested on historical out-of-sample data (2024+ matches). '
-                    f'Past performance does not guarantee future results.</div>',
+                    f'{_ckpt_caveat}</div>',
                     unsafe_allow_html=True,
                 )
 

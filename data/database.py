@@ -402,19 +402,21 @@ def get_db_status(db_path: Optional[str] = None) -> dict:
             return row["n"] if row else 0
 
         return {
-            "venue_stats_count":        count("venue_stats"),
-            "batter_stats_count":       count("batter_stats"),
-            "bowler_stats_count":       count("bowler_stats"),
-            "match_position_count":     count("match_position_stats"),
-            "predictions_count":        count("predictions"),
-            "womens_match_positions":   count("match_position_stats", "format='Women''s T20I'"),
-            "mens_match_positions":     count("match_position_stats", "format='T20I'"),
-            "last_ingest":              get_meta("last_ingest_time", "Never", db_path),
-            "womens_matches_ingested":  get_meta("womens_matches_ingested", "0", db_path),
-            "mens_matches_ingested":    get_meta("mens_matches_ingested", "0", db_path),
-            "manual_scorecards":          count("manual_scorecards"),
-            "manual_scorecards_ingested": count("manual_scorecards", "ingested=1"),
-            "manual_scorecards_pending":  count("manual_scorecards", "ingested=0"),
+            "venue_stats_count":            count("venue_stats"),
+            "batter_stats_count":           count("batter_stats"),
+            "bowler_stats_count":           count("bowler_stats"),
+            "match_position_count":         count("match_position_stats"),
+            "predictions_count":            count("predictions"),
+            "womens_match_positions":       count("match_position_stats", "format='Women''s T20I'"),
+            "mens_match_positions":         count("match_position_stats", "format='T20I'"),
+            "t20_blast_match_positions":    count("match_position_stats", "format='T20 Blast'"),
+            "last_ingest":                  get_meta("last_ingest_time", "Never", db_path),
+            "womens_matches_ingested":      get_meta("womens_matches_ingested", "0", db_path),
+            "mens_matches_ingested":        get_meta("mens_matches_ingested", "0", db_path),
+            "t20_blast_matches_ingested":   get_meta("t20_blast_matches_ingested", "0", db_path),
+            "manual_scorecards":            count("manual_scorecards"),
+            "manual_scorecards_ingested":   count("manual_scorecards", "ingested=1"),
+            "manual_scorecards_pending":    count("manual_scorecards", "ingested=0"),
         }
     finally:
         conn.close()
@@ -1156,6 +1158,28 @@ def get_bowlers(format_: Optional[str] = None, db_path: Optional[str] = None) ->
                 "SELECT DISTINCT player_name FROM bowler_stats ORDER BY player_name"
             ).fetchall()
         return [r["player_name"] for r in rows if r["player_name"]]
+    finally:
+        conn.close()
+
+
+def get_teams(format_: Optional[str] = None, db_path: Optional[str] = None) -> list[str]:
+    """Return all team names from team_batting_stats for a given format, sorted alphabetically.
+
+    For T20 Blast this returns actual county names as ingested from Cricsheet
+    (e.g. 'Surrey', 'Yorkshire', 'Glamorgan') — always in sync with the DB.
+    """
+    conn = get_connection(db_path)
+    try:
+        if format_:
+            rows = conn.execute(
+                "SELECT DISTINCT team FROM team_batting_stats WHERE format=? ORDER BY team",
+                (format_,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT DISTINCT team FROM team_batting_stats ORDER BY team"
+            ).fetchall()
+        return [r["team"] for r in rows if r["team"]]
     finally:
         conn.close()
 

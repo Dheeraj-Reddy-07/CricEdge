@@ -27,6 +27,7 @@ PHASE_BOUNDARIES_ODI = {
 FORMAT_IS_ODI = {
     "Women's T20I": False,
     "T20I":         False,
+    "T20 Blast":    False,   # English domestic T20 — same phase boundaries as T20I
     "Men's ODI":    True,
     "Women's ODI":  True,
     "Men's List A": True,
@@ -263,14 +264,15 @@ Z_SCORE_THRESHOLD = 0.75
 # ─────────────────────────────────────────────────────────────────
 # FORMATS
 # ─────────────────────────────────────────────────────────────────
-SUPPORTED_FORMATS = ["Women's T20I", "T20I"]
+SUPPORTED_FORMATS = ["Women's T20I", "T20I", "T20 Blast"]
 PRIMARY_FORMAT = "Women's T20I"
 
 ODI_FORMATS   = set()   # ODI paused — T20I focus only
-T20_FORMATS   = {"Women's T20I", "T20I"}
-MAX_OVERS     = {"Women's T20I": 20, "T20I": 20}
+T20_FORMATS   = {"Women's T20I", "T20I", "T20 Blast"}
+MAX_OVERS     = {"Women's T20I": 20, "T20I": 20, "T20 Blast": 20}
 
 # Women's stats are NEVER mixed with Men's player/team stats.
+# T20 Blast uses county team names — fully isolated from international formats.
 FORMAT_ISOLATION = {
     "Women's T20I": {
         "use_for_player_stats":   True,
@@ -280,6 +282,13 @@ FORMAT_ISOLATION = {
     "T20I": {
         "use_for_player_stats":   False,
         "use_for_team_stats":     False,
+        "use_for_match_position": True,
+    },
+    "T20 Blast": {
+        # County domestic format — player and team stats tracked separately.
+        # Teams are county sides (Yorkshire, Surrey, etc.) not national teams.
+        "use_for_player_stats":   True,
+        "use_for_team_stats":     True,
         "use_for_match_position": True,
     },
     "Men's ODI": {
@@ -312,6 +321,10 @@ CRICSHEET_DOWNLOADS = {
     "T20I": {
         "url":   "https://cricsheet.org/downloads/t20s_male_json.zip",
         "label": "Men's T20I (JSON)",
+    },
+    "T20 Blast": {
+        "url":   "https://cricsheet.org/downloads/ntb_male_json.zip",
+        "label": "T20 Blast (JSON)",
     },
     "Men's ODI": {
         "url":   "https://cricsheet.org/downloads/odis_male_json.zip",
@@ -399,8 +412,21 @@ MANUAL_SCORECARD_FORMAT_DEFAULT = "Women's T20I"
 #     OVER3_4_6    : predict after over 3   → market = runs in overs 4-6
 #     OVER6_7_10   : predict after over 6   → market = runs in overs 7-10 (Next 4 Overs)
 #     OVER15_TOTAL : predict end of over 15 → market = full innings total
+#
+# NOTE: T20 Blast checkpoints carry over from Women's T20I validation as a starting
+# point. They have NOT yet been independently validated for T20 Blast. T20 Blast-
+# specific validation will be run once sufficient live match predictions are logged.
 CHECKPOINT_MODELS = {
+    # Women's T20I — validated production assignments
     "OVER3_4_6":    "PRUNED",
     "OVER6_7_10":   "FULL",
     "OVER15_TOTAL": "PRUNED",
+}
+
+# T20 Blast checkpoint model assignments (carried over from Women's T20I — NOT YET
+# validated for T20 Blast. Run T20-Blast-specific validation once live data accrues.)
+CHECKPOINT_MODELS_T20_BLAST = {
+    "OVER3_4_6":    "PRUNED",   # carried over — not yet validated for T20 Blast
+    "OVER6_7_10":   "FULL",     # carried over — not yet validated for T20 Blast
+    "OVER15_TOTAL": "PRUNED",   # carried over — not yet validated for T20 Blast
 }

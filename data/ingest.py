@@ -243,8 +243,9 @@ class StatsAccumulator:
         self.format_    = format_
         self.is_womens  = (format_ == "Women's T20I")
         self.is_odi     = format_ in config.ODI_FORMATS
-        # For ODI formats, we DO build player/team stats (same as Women's T20I)
-        self.track_players = self.is_womens or self.is_odi
+        self.is_t20_blast = (format_ == "T20 Blast")
+        # For ODI formats and T20 Blast, we DO build player/team stats
+        self.track_players = self.is_womens or self.is_odi or self.is_t20_blast
 
         # venue → {innings, runs_per_over: list[list], finals, etc.}
         max_overs = 50 if self.is_odi else 20
@@ -985,6 +986,7 @@ def ingest_format(
         "T20I":         "mens_matches_ingested",
         "Men's ODI":    "mens_odi_matches_ingested",
         "Women's ODI":  "womens_odi_matches_ingested",
+        "T20 Blast":    "t20_blast_matches_ingested",
     }
     if format_ in meta_key_map:
         set_meta(meta_key_map[format_], str(acc.match_count), db_path)
@@ -1137,7 +1139,7 @@ def main():
     )
     parser.add_argument(
         "--format",
-        choices=["Women's T20I", "T20I", "Men's ODI", "Women's ODI", "all"],
+        choices=["Women's T20I", "T20I", "Men's ODI", "Women's ODI", "T20 Blast", "all"],
         default="all",
         help="Which format to ingest (default: all)",
     )
@@ -1173,7 +1175,7 @@ def main():
         return
 
     formats_to_run = (
-        ["Women's T20I", "T20I", "Men's ODI"] if args.format == "all"
+        ["Women's T20I", "T20I", "Men's ODI", "T20 Blast"] if args.format == "all"
         else [args.format]
     )
 
